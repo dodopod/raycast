@@ -4,12 +4,15 @@
 #include <SDL2/SDL.h>
 
 
-const char WINDOW_TITLE[] = "Raycast Prototype 0";
+const char WINDOW_TITLE[] = "Raycast Prototype 1";
 const int WINDOW_X = SDL_WINDOWPOS_UNDEFINED;
 const int WINDOW_Y = SDL_WINDOWPOS_UNDEFINED;
-const int WINDOW_WIDTH = 320;
-const int WINDOW_HEIGHT = 240;
+const int WINDOW_WIDTH = 640;
+const int WINDOW_HEIGHT = 480;
 const uint32_t WINDOW_FLAGS = SDL_WINDOW_SHOWN;
+
+const SDL_Color SKY_COLOR = {0, 0, 0, 255};
+const SDL_Color WALL_COLOR = {0, 0, 255, 255};
 
 SDL_Window* gWindow = NULL;
 
@@ -36,6 +39,14 @@ Vec2 operator-(const Vec2& u, const Vec2& v)
 Vec2 operator*(double a, const Vec2& v)
 {
     return {a * v.x, a * v.y};
+}
+inline double dot(const Vec2& u, const Vec2& v)
+{
+    return u.x * v.x + u.y * v.y;
+}
+inline double magnitude(const Vec2& v)
+{
+    return sqrt(v.x * v.x + v.y * v.y);
 }
 
 struct Ray
@@ -67,15 +78,20 @@ Vec2 findPixel(const Camera& camera, int w, int x);
 // Returns first intersection of ray with wall
 Vec2 cast(const Ray& ray, const Map& map);
 
-// Returns true if point is on map
-bool isOnMap(const Vec2& point, const Map& map);
-
 // Move a point along a ray, until one of its coordinates is a whole number
 void step(Vec2& position, const Vec2& direction);
 
-// Returns Euclidean distance between 2 points squared
-// Faster than finding distance; useful because if 0 < x < y, then 0 < x^2 < y^2
-double squareDist(const Vec2& p1, const Vec2& p2);
+// Returns true if given point touches a wall
+bool intersects(const Vec2& point, const Map& map);
+
+// Returns true if point is on map
+bool isOnMap(const Vec2& point, const Map& map);
+
+// Returns Euclidean distance between 2 points
+double distance(const Vec2& p1, const Vec2& p2);
+
+// Returns true if x is a whole number
+bool isWhole(double x);
 
 
 int main(int argc, char* argv[])
@@ -88,12 +104,12 @@ int main(int argc, char* argv[])
     Map world =
     {
         {0, 0, 0, 0, 0, 0, 0, 0},
-        {0, 0, 0, 0, 0, 1, 0, 0},
+        {1, 1, 1, 1, 1, 1, 1, 1},
         {0, 0, 0, 0, 0, 0, 0, 0},
         {0, 0, 0, 0, 0, 0, 0, 0},
-        {0, 0, 0, 0, 0, 0, 0, 1},
-        {0, 0, 1, 0, 0, 0, 0, 0},
         {0, 0, 0, 0, 0, 0, 0, 0},
+        {0, 0, 0, 0, 0, 0, 0, 0},
+        {1, 1, 1, 1, 1, 1, 1, 1},
         {0, 0, 0, 0, 0, 0, 0, 0}
     };
     Camera player =
@@ -109,7 +125,7 @@ int main(int argc, char* argv[])
     
     render(windowSurface, player, world);
     
-    SDL_Delay(2000);
+    SDL_Delay(3000);
     
     close();
     return 0;
@@ -155,10 +171,13 @@ void close()
 
 void render(SDL_Surface* surface, const Camera& camera, const Map& map)
 {
-    const uint32_t wallColor = SDL_MapRGB(surface->format, 255, 255, 255);
-    const uint32_t skyColor = SDL_MapRGB(surface->format, 0, 0, 0);
+    const int HORIZON = WINDOW_HEIGHT / 2;
+    const int WALL_HEIGHT = HORIZON;
     
-    SDL_FillRect(surface, NULL, skyColor); // fill in the background
+    SDL_FillRect(surface, NULL, SDL_MapRGB(surface->format,
+                                           SKY_COLOR.r,
+                                           SKY_COLOR.g,
+                                           SKY_COLOR.b)); // fill in the background
     
     // For each column of the image
     SDL_Rect column = {0, 0, 1, surface->h};
@@ -171,8 +190,32 @@ void render(SDL_Surface* surface, const Camera& camera, const Map& map)
         // If the ray intersects a wall, draw it
         if (isOnMap(intersection, map))
         {
+            // find visible height of wall
+            double z = dot(intersection - camera.viewpoint, camera.direction)
+                       / magnitude(camera.direction);
+            column.y = HORIZON - WALL_HEIGHT/z;
+            column.h = 2 * (HORIZON - column.y);
+            
+            // shade wall
+            int shade = 0;
+            if (isWhole(intersection.x))
+            {
+                shade += 32; // NS walls are shaded
+            }
+            
+            shade += 30 * z; // fog
+            
+            SDL_Color shaded = WALL_COLOR;
+            shaded.r = shaded.r > shade ? shaded.r - shade : 0;
+            shaded.g = shaded.g > shade ? shaded.g - shade : 0;
+            shaded.b = shaded.b > shade ? shaded.b - shade : 0;
+            
+            // draw wall
             column.x = x;
-            SDL_FillRect(surface, &column, wallColor);
+            SDL_FillRect(surface, &column, SDL_MapRGB(surface->format,
+                                                      shaded.r,
+                                                      shaded.g,
+                                                      shaded.b));
         }
     }
 
@@ -197,7 +240,7 @@ Vec2 cast(const Ray& ray, const Map& map)
     Vec2 position = ray.origin + ray.direction; // point on ray that we're checking
     
     // move along ray, until we hit a wall, or go off the map
-    while (isOnMap(position, map) && !map[position.y][position.x])
+    while (isOnMap(position, map) && !intersects(position, map))
     {
         step(position, ray.direction);
     }
@@ -221,7 +264,15 @@ void step(Vec2& position, const Vec2& direction)
     stepY.x = (stepY.y - position.y) / slope + position.x;
     
     // move position to closer of the two
-    position = squareDist(position, stepX) < squareDist(position, stepY) ? stepX : stepY;
+    position = distance(position, stepX) < distance(position, stepY) ? stepX : stepY;
+}
+
+
+// NOTE Can I combine this with step?
+inline bool intersects(const Vec2& point, const Map& map)
+{
+    return isWhole(point.x) && (map[point.y][point.x-1] || map[point.y][point.x])
+        || isWhole(point.y) && (map[point.y-1][point.x] || map[point.y][point.x]);
 }
 
 
@@ -231,7 +282,13 @@ inline bool isOnMap(const Vec2& point, const Map& map)
 }
 
 
-inline double squareDist(const Vec2& p1, const Vec2& p2)
+inline double distance(const Vec2& p1, const Vec2& p2)
 {
-    return (p1.x - p2.x) * (p1.x - p2.x) + (p1.y - p2.y) * (p1.y - p2.y);
+    return magnitude(p2-p1);
+}
+
+
+inline bool isWhole(double x)
+{
+    return x == (int)x;
 }
