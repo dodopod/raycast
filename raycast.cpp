@@ -4,7 +4,7 @@
 #include <SDL2/SDL.h>
 
 
-const char WINDOW_TITLE[] = "Raycast Prototype 1";
+const char WINDOW_TITLE[] = "Raycast Prototype 2";
 const int WINDOW_X = SDL_WINDOWPOS_UNDEFINED;
 const int WINDOW_Y = SDL_WINDOWPOS_UNDEFINED;
 const int WINDOW_WIDTH = 640;
@@ -14,10 +14,26 @@ const uint32_t WINDOW_FLAGS = SDL_WINDOW_SHOWN;
 const SDL_Color SKY_COLOR = {0, 0, 0, 255};
 const SDL_Color WALL_COLOR = {0, 0, 255, 255};
 
+const double PLAYER_SPEED = 0.02;
+const double PLAYER_TURN = M_PI / 90; // 2 degrees
+
+
+bool gQuit = false;
+namespace gKbd
+{
+    bool up = false;
+    bool left = false;
+    bool down = false;
+    bool right = false;
+}
+
+
 SDL_Window* gWindow = NULL;
+
 
 typedef std::vector<bool> MapRow;
 typedef std::vector<MapRow> Map;
+
 
 struct Vec2
 {
@@ -49,11 +65,13 @@ inline double magnitude(const Vec2& v)
     return sqrt(v.x * v.x + v.y * v.y);
 }
 
+
 struct Ray
 {
     Vec2 origin;
     Vec2 direction;
 };
+
 
 struct Camera
 {
@@ -69,6 +87,12 @@ bool init();
 // Destroys window and quits SDL
 void close();
 
+// Polls SDL events
+void pollEvents();
+
+// Moves camera according to input
+void moveCamera(Camera& camera);
+
 // Renders the world to the given surface
 void render(SDL_Surface* surface, const Camera& camera, const Map& map);
 
@@ -80,6 +104,9 @@ Vec2 cast(const Ray& ray, const Map& map);
 
 // Move a point along a ray, until one of its coordinates is a whole number
 void step(Vec2& position, const Vec2& direction);
+
+// Rotates a vector
+void rotate(Vec2& position, double angle);
 
 // Returns true if given point touches a wall
 bool intersects(const Vec2& point, const Map& map);
@@ -103,29 +130,30 @@ int main(int argc, char* argv[])
     
     Map world =
     {
-        {0, 0, 0, 0, 0, 0, 0, 0},
         {1, 1, 1, 1, 1, 1, 1, 1},
-        {0, 0, 0, 0, 0, 0, 0, 0},
-        {0, 0, 0, 0, 0, 0, 0, 0},
-        {0, 0, 0, 0, 0, 0, 0, 0},
-        {0, 0, 0, 0, 0, 0, 0, 0},
-        {1, 1, 1, 1, 1, 1, 1, 1},
-        {0, 0, 0, 0, 0, 0, 0, 0}
+        {1, 0, 0, 0, 0, 0, 0, 1},
+        {1, 0, 0, 0, 0, 0, 0, 1},
+        {1, 0, 0, 0, 0, 0, 0, 1},
+        {1, 0, 0, 0, 0, 0, 0, 1},
+        {1, 0, 0, 0, 0, 0, 0, 1},
+        {1, 0, 0, 0, 0, 0, 0, 1},
+        {1, 1, 1, 1, 1, 1, 1, 1}
     };
     Camera player =
     {
-        {0, 3}, // viewpoint (middle of western edge)
-        {1, 0}, // direction (east)
-        {0, 1}  // imageSize (90 degree fov)
+        {3, 3}, // viewpoint (middle of eastern edge)
+        {-1, 0}, // direction (west) // FIXME Why does it crash when I look west?
+        {0, -1}  // imageSize (90 degree fov)
     };
     
     SDL_Surface* windowSurface = SDL_GetWindowSurface(gWindow);
     
-    SDL_Delay(100); // so I don't render before window finishes initializing
-    
-    render(windowSurface, player, world);
-    
-    SDL_Delay(3000);
+    while(!gQuit)
+    {
+        pollEvents();
+        moveCamera(player);
+        render(windowSurface, player, world);
+    }
     
     close();
     return 0;
@@ -162,10 +190,84 @@ bool init()
 }
 
 
+void pollEvents()
+{
+    SDL_Event e;
+    while (SDL_PollEvent(&e) != 0)
+    {
+        switch (e.type)
+        {
+            case SDL_QUIT:
+                gQuit = true;
+                break;
+                
+            case SDL_KEYDOWN:
+                switch (e.key.keysym.sym)
+                {
+                    case SDLK_UP:
+                        gKbd::up = true;
+                        break;
+                    case SDLK_LEFT:
+                        gKbd::left = true;
+                        break;
+                    case SDLK_DOWN:
+                        gKbd::down = true;
+                        break;
+                    case SDLK_RIGHT:
+                        gKbd::right = true;
+                        break;
+                }
+                break;
+                
+            case SDL_KEYUP:
+                switch (e.key.keysym.sym)
+                {
+                    case SDLK_UP:
+                        gKbd::up = false;
+                        break;
+                    case SDLK_LEFT:
+                        gKbd::left = false;
+                        break;
+                    case SDLK_DOWN:
+                        gKbd::down = false;
+                        break;
+                    case SDLK_RIGHT:
+                        gKbd::right = false;
+                        break;
+                }
+                break;
+        }
+    }
+}
+
+
 void close()
 {
     SDL_DestroyWindow(gWindow);
     SDL_Quit();
+}
+
+
+void moveCamera(Camera& camera) // TODO add turning; vector +=
+{
+    if (gKbd::up)
+    {
+        camera.viewpoint = camera.viewpoint + PLAYER_SPEED * camera.direction;
+    }
+    if (gKbd::down)
+    {
+        camera.viewpoint = camera.viewpoint + PLAYER_SPEED * -camera.direction;
+    }
+    if (gKbd::left)
+    {
+        rotate(camera.direction, PLAYER_TURN);
+        rotate(camera.imageSize, PLAYER_TURN);
+    }
+    if (gKbd::right)
+    {
+        rotate(camera.direction, -PLAYER_TURN);
+        rotate(camera.imageSize, -PLAYER_TURN);
+    }
 }
 
 
@@ -198,7 +300,7 @@ void render(SDL_Surface* surface, const Camera& camera, const Map& map)
             
             // shade wall
             int shade = 0;
-            if (isWhole(intersection.x))
+            if (isWhole(intersection.x)) // FIXME
             {
                 shade += 32; // NS walls are shaded
             }
@@ -240,9 +342,9 @@ Vec2 cast(const Ray& ray, const Map& map)
     Vec2 position = ray.origin + ray.direction; // point on ray that we're checking
     
     // move along ray, until we hit a wall, or go off the map
-    while (isOnMap(position, map) && !intersects(position, map))
+    while (isOnMap(position, map) && !map[position.y][position.x])
     {
-        step(position, ray.direction);
+        step(position, ray.direction); // TODO can I combine w/ step?
     }
     
     return position;
@@ -253,14 +355,15 @@ void step(Vec2& position, const Vec2& direction)
 {
     double slope = direction.y / direction.x;
     
+    // HACK I'm fudging the numbers slightly to put position in correct square
     // find position at next whole X
     Vec2 stepX;
-    stepX.x = direction.x < 0 ? ceil(position.x - 1) : floor(position.x + 1);
+    stepX.x = direction.x < 0 ? ceil(position.x - 1)-.01 : floor(position.x + 1);
     stepX.y = (stepX.x - position.x) * slope + position.y;
     
     // find position at next whole Y
     Vec2 stepY;
-    stepY.y = direction.y < 0 ? ceil(position.y - 1) : floor(position.y + 1);
+    stepY.y = direction.y < 0 ? ceil(position.y - 1)-.01 : floor(position.y + 1);
     stepY.x = (stepY.y - position.y) / slope + position.x;
     
     // move position to closer of the two
@@ -268,11 +371,13 @@ void step(Vec2& position, const Vec2& direction)
 }
 
 
-// NOTE Can I combine this with step?
-inline bool intersects(const Vec2& point, const Map& map)
+void rotate(Vec2& position, double angle)
 {
-    return isWhole(point.x) && (map[point.y][point.x-1] || map[point.y][point.x])
-        || isWhole(point.y) && (map[point.y-1][point.x] || map[point.y][point.x]);
+    double x = position.x;
+    double y = position.y;
+    
+    position.x = cos(angle) * x + sin(angle) * y;
+    position.y = -sin(angle) * x + cos(angle) * y;
 }
 
 
