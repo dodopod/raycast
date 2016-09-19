@@ -1,5 +1,8 @@
 ## OBJS specifies the files we're compiling
-OBJS = raycast.cpp
+OBJS = camera.cpp raycast.cpp vec2.cpp map.cpp ray.cpp
+
+#DEPS specifies additional files required for compilation
+DEPS = camera.hpp vec2.hpp map.hpp ray.cpp
 
 #CC specifies which compiler we're using
 CC = g++
@@ -15,5 +18,5 @@ LINKER_FLAGS = -lSDL2
 OBJ_NAME = raycast
 
 #This is the target that compiles our executable
-all : $(OBJS)
+all : $(OBJS) $(DEPS)
 	$(CC) $(OBJS) $(COMPILER_FLAGS) $(LINKER_FLAGS) -o $(OBJ_NAME)
